@@ -169,6 +169,79 @@ reverse. Tags below are v3; if you use v2, delete the bracketed tags.
 [matter-of-fact] The same output, for the person who actually has to clear it. Three numbers, precision and recall against ground truth, and the money. [pause] Then the exception ledger. Forty-seven findings, each with a reason code and a suggested action, filterable. Isolate the misreported settlements and there are five. [pause] Open setl_00016 and you get the arithmetic behind it: payments net of fees, refunds out, adjustments applied, recomputed nineteen twenty and nine, against a reported seventeen thirty-seven twenty-two. Header disagrees by a hundred and eighty-two eighty-seven. [pause] And a live question, answered through read-only tools, with every cited identifier traced back to what those tools returned.
 ```
 
+## The single paste
+
+Generating sixteen clips by hand is tedious. This is the whole script as one block,
+followed by a step that cuts it back into the sixteen clips automatically, so the
+convenience of one generation does not cost the sync.
+
+It works by transcribing the generated file and aligning the transcript against the
+clips below, then cutting at the word boundaries where one clip ends and the next
+begins. Cutting on silence instead does not work, because the pause between two clips
+is indistinguishable from the pause between two sentences inside one. Padding the script
+with `<break>` tags to make them distinguishable is worse: ElevenLabs documents that many
+break tags in a single generation make the model speed up or add artefacts, and v3 does
+not support them at all. Aligning to the words needs no marker.
+
+```powershell
+python tools/split_voiceover.py media/narration.mp3
+python tools/sync_voiceover.py --no-trim
+python tools/transcribe.py --video media/final_tts.mp4
+```
+
+`--no-trim` is not optional. The split clips are already cut tight to the first and last
+word, and letting the placement step trim them again removes real speech: it cut "did the
+work" off the end of `02b` before this was caught.
+
+If the script exceeds the character limit for your model, generate it in two parts and
+pass both, in order. Split after the outro paragraph, before "The same output":
+
+```powershell
+python tools/split_voiceover.py media/part1.mp3 media/part2.mp3
+```
+
+Two notes on wording for a synthesised read. `setl_00016` is written "settlement sixteen"
+below, because the identifier itself reads badly aloud. And check `lakhs`, `paise` and
+`GST` in a preview.
+
+```
+[matter-of-fact] This is my submission for Track 4, AI Finance Controller. The brief asks for an agent that closes one finance-ops loop across a fifty-plus record batch, reporting its match rate and the exceptions it could not resolve. [pause] The bar is throughput, measured accuracy, and an honest exception list. So I built a three-way reconciler, and the rest of this is evidence.
+
+A merchant has three sources of truth that never agree. [pause] One bank credit does not match one payment. It matches a netting identity: payments less fees and GST, less refunds, less chargebacks, plus adjustments.
+
+One command. No dependencies, no API key. Watch what it reports, because that is the whole argument.
+
+Eleven sixty-five records in forty-four milliseconds. [pause] Three numbers, not one. Four eighty-one by arithmetic, five model-assisted and verified, forty-seven raised. A blended rate would hide which did the work.
+
+That identity is why matching is hard. Here it is for one settlement, computed from its own line items.
+
+Recomputed net, nineteen twenty and nine paise. The gateway reported seventeen thirty-seven twenty-two. [pause] [reflective] The money is right. The report is wrong. Nothing here trusts that header.
+
+[matter-of-fact] Every match passes one function before it counts, whether arithmetic proposed it or a language model did.
+
+Three rejected. A sweep credit echoes one settlement's reference, so the match looks right... and is wrong by lakhs. [pause] Subset-sum then resolved all three properly.
+
+[reflective] Now a mistake of mine, rather than only results. I let payments with no order reference match on amount alone.
+
+[matter-of-fact] One false positive in forty-six thousand records. [pause] [drawn out] A wrong match closes a break permanently. Declining costs one exception. [pause] Measured both ways, declining removed it and cost zero correct matches.
+
+One good run proves nothing, and the track says so. Two hundred independently generated batches.
+
+Two hundred and thirty thousand records. One hundred percent precision and recall... minimum, mean and maximum. [pause] [reflective] And I wrote the generator too, so that table lists every difficulty I thought of.
+
+[matter-of-fact] The output is only useful if someone can interrogate it, so there is an agent with nine read-only tools.
+
+Ten graded questions, one adversarial. Every identifier is checked against what the tools returned, so a fabricated one is reported, not presented as fact.
+
+Everything is in the repo: the architecture, the scored report, the exception ledger as a CSV, and a hash-chained audit log that replays to reproduce its own outcome. [pause] One command reproduces every figure you have seen. [pause] [reflective] And the limitation, stated plainly: I wrote both sides, so the test set only contains difficulties I thought of.
+
+[matter-of-fact] The same output, for the person who actually has to clear it. Three numbers, precision and recall against ground truth, and the money. [pause] Then the exception ledger. Forty-seven findings, each with a reason code and a suggested action, filterable. Isolate the misreported settlements and there are five. [pause] Open settlement sixteen and you get the arithmetic behind it: payments net of fees, refunds out, adjustments applied, recomputed nineteen twenty and nine, against a reported seventeen thirty-seven twenty-two. Header disagrees by a hundred and eighty-two eighty-seven. [pause] And a live question, answered through read-only tools, with every cited identifier traced back to what those tools returned.
+```
+
+This route was tested by feeding it the continuous human take: all sixteen clips were
+found, every cut landed within about a second of its true window, and the assembled track
+matched the picture to 0.00s.
+
 ## What to do with the files
 
 Save them into `media/vo/` named by id, for example `media/vo/02b.mp3`. Any of mp3, wav,

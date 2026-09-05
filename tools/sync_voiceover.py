@@ -53,6 +53,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-missing", action="store_true",
                         help="leave a window quiet instead of failing when its clip "
                              "is absent")
+    parser.add_argument("--no-trim", action="store_true",
+                        help="use clips whole instead of detecting where the speech "
+                             "starts. Required for clips from split_voiceover.py, "
+                             "which are already cut at word boundaries: trimming them "
+                             "again removes real words.")
     args = parser.parse_args(argv)
 
     cues = json.loads(Path(args.cues).read_text(encoding="utf-8"))
@@ -83,34 +88,30 @@ def main(argv: list[str] | None = None) -> int:
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
 
-    def silence(seconds: float, name: str) -> Path:
-        path = work / name
-        run([FFMPEG, "-y", "-v", "error", "-f", "lavfi",
-             "-i", f"anullsrc=r=48000:cl=mono", "-t", f"{seconds:.3f}",
-             "-c:a", "pcm_s16le", str(path)])
-        return path
-
-    pieces: list[Path] = []
-    cursor = 0.0
+    # Each clip is delayed to its absolute position and mixed onto one bed, rather than
+    # concatenated with silence between. Concatenation looks equivalent and is not: every
+    # piece rounds to a whole number of samples, and those roundings accumulate, so a
+    # track assembled that way ran 0.42s short by the end and every late cue sat early.
+    # Delaying to an absolute offset cannot accumulate error.
+    placed: list[tuple[float, Path]] = []
     over: list[str] = []
     print(f"{len(placements)} cues, video {video_len:.2f}s")
     print()
     print(f"  {'cue':5s} {'window':>14s} {'room':>6s} {'clip':>7s}  fit")
     print("  " + "-" * 52)
 
-    for index, (cue, start, end, clip) in enumerate(placements):
+    for cue, start, end, clip in placements:
         window = end - start
-        if start > cursor + 0.001:
-            pieces.append(silence(start - cursor, f"gap{index}.wav"))
 
         if clip is None:
-            pieces.append(silence(window, f"quiet{index}.wav"))
             print(f"  {cue['id']:5s} {start:6.1f}-{end:<7.1f} {window:5.1f}s "
                   f"{'--':>7s}  no clip, left quiet")
-            cursor = end
             continue
 
-        begin, finish = speech_bounds(clip)
+        if args.no_trim:
+            begin, finish = 0.0, duration(clip)
+        else:
+            begin, finish = speech_bounds(clip)
         content = finish - begin
         tempo = max(1.0, content / window)
         clamped = tempo > args.max_tempo
@@ -121,13 +122,14 @@ def main(argv: list[str] | None = None) -> int:
         chain = CLEAN_CHAIN
         if tempo > 1.001:
             chain += f",atempo={tempo:.4f}"
-        chain += f",apad,atrim=0:{window:.3f}"
+        # Trim to the window so a clip can never bleed into the next one's screen.
+        chain += f",atrim=0:{window:.3f}"
         fitted = work / f"cue_{cue['id']}.wav"
         run([FFMPEG, "-y", "-v", "error",
              "-ss", f"{begin:.3f}", "-to", f"{finish:.3f}", "-i", str(clip),
              "-vn", "-af", chain, "-ac", "1", "-ar", "48000",
              "-c:a", "pcm_s16le", str(fitted)])
-        pieces.append(fitted)
+        placed.append((start, fitted))
 
         if clamped:
             fit = f"TOO LONG, clamped to {tempo:.2f}x and cut"
@@ -137,17 +139,32 @@ def main(argv: list[str] | None = None) -> int:
             fit = f"sped {tempo:.3f}x"
         print(f"  {cue['id']:5s} {start:6.1f}-{end:<7.1f} {window:5.1f}s "
               f"{content:6.1f}s  {fit}")
-        cursor = end
 
-    if cursor < video_len:
-        pieces.append(silence(video_len - cursor, "tail.wav"))
-
-    listing = work / "list.txt"
-    listing.write_text("".join(
-        f"file '{p.resolve().as_posix()}'\n" for p in pieces), encoding="utf-8")
     track = work / "track.wav"
-    run([FFMPEG, "-y", "-v", "error", "-f", "concat", "-safe", "0",
-         "-i", str(listing), "-c:a", "pcm_s16le", str(track)])
+    if not placed:
+        run([FFMPEG, "-y", "-v", "error", "-f", "lavfi",
+             "-i", "anullsrc=r=48000:cl=mono", "-t", f"{video_len:.3f}",
+             "-c:a", "pcm_s16le", str(track)])
+    else:
+        command = [FFMPEG, "-y", "-v", "error"]
+        for _, path in placed:
+            command += ["-i", str(path)]
+        parts = []
+        for index, (start, _) in enumerate(placed):
+            parts.append(f"[{index}:a]adelay={int(round(start * 1000))}:all=1[d{index}]")
+        mix = "".join(f"[d{i}]" for i in range(len(placed)))
+        # normalize=0 keeps each clip at its own level; the default would attenuate
+        # everything by the number of inputs.
+        parts.append(f"{mix}amix=inputs={len(placed)}:normalize=0:dropout_transition=0"
+                     f"[mixed]")
+        # amix ends with its last input, so the mix stops when the final clip does.
+        # Without padding, -t truncates the picture instead of extending the audio, and
+        # the finished video comes out short.
+        parts.append("[mixed]apad[out]")
+        command += ["-filter_complex", ";".join(parts), "-map", "[out]",
+                    "-t", f"{video_len:.3f}", "-ac", "1", "-ar", "48000",
+                    "-c:a", "pcm_s16le", str(track)]
+        run(command)
 
     made = duration(track)
     print()
