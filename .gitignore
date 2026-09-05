@@ -1,0 +1,35 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Generated artefacts, reproducible from a seed via `make demo`, so not committed.
+data/
+reports/
+
+# Note: docs/ is deliberately NOT ignored. `python -m recon.cli --publish` writes
+# docs/index.html, which is committed and served by GitHub Pages so a reviewer can
+# read the report without cloning or running anything. Regenerate it before
+# committing whenever the pipeline changes.
+
+# Recorded footage. Regenerate with tools\record_walkthrough.ps1. Kept out of the
+# repo because the video belongs on the submission form, not in git history.
+media/
+
+# Secrets. The pipeline runs fully offline without these; they only switch the
+# residue classifier from the heuristic backend to a hosted model.
+.env
+*.key
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

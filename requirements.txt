@@ -1,0 +1,10 @@
+# No third-party dependencies.
+#
+# The pipeline runs on the Python 3.11+ standard library alone. The optional
+# hosted-model backend calls the API over urllib rather than pulling in an SDK,
+# so `python -m recon.cli` works on a clean interpreter with no install step and
+# no network access.
+#
+# This is deliberate. A reviewer should be able to clone and run without
+# resolving a dependency tree, and the reported figures should not depend on
+# which versions happened to install.
