@@ -184,10 +184,20 @@ break tags in a single generation make the model speed up or add artefacts, and 
 not support them at all. Aligning to the words needs no marker.
 
 ```powershell
-python tools/split_voiceover.py media/narration.mp3
-python tools/sync_voiceover.py --no-trim
-python tools/transcribe.py --video media/final_tts.mp4
+python tools/split_voiceover.py media/narration.mp3 --model small.en
+python tools/sync_voiceover.py --no-trim --extend 02b=2.7 --max-tempo 1.2
+python tools/transcribe.py --video media/final_tts.mp4 --model small.en
 ```
+
+Those are the settings a real generation needed, not defaults. A v3 read of this script
+came back at 222s against 225s of total window room, so it fits overall but leaves almost
+nothing spare in any one window, and two clips wanted slightly more than the default
+1.15x. `02b` was given real room instead, taken from the gap before it where the screen
+already shows the record count and throughput, which left `01a` as the only clip needing
+much: 1.16x. Everything else came in at 1.11x or below.
+
+Result: nine of sixteen cues matched their script exactly, the rest scored 74 to 87
+percent on recognition noise alone, and the track matched the picture to 0.00s.
 
 `--no-trim` is not optional. The split clips are already cut tight to the first and last
 word, and letting the placement step trim them again removes real speech: it cut "did the

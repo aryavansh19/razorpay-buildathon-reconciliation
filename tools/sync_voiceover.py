@@ -53,6 +53,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-missing", action="store_true",
                         help="leave a window quiet instead of failing when its clip "
                              "is absent")
+    parser.add_argument("--extend", action="append", default=[], metavar="ID=SECONDS",
+                        help="start this cue's window earlier, to buy room for a clip "
+                             "that runs long. Only safe where the screen already shows "
+                             "what the line describes, and only into a gap where "
+                             "nothing else is spoken.")
     parser.add_argument("--no-trim", action="store_true",
                         help="use clips whole instead of detecting where the speech "
                              "starts. Required for clips from split_voiceover.py, "
@@ -69,13 +74,25 @@ def main(argv: list[str] | None = None) -> int:
     video_len = duration(video)
     terminal_len = duration(Path("media/terminal.mp4"))
 
+    extensions: dict[str, float] = {}
+    for item in args.extend:
+        cue_id, seconds = item.split("=", 1)
+        extensions[cue_id] = float(seconds)
+
     # Resolve every cue to an absolute position in the finished cut.
     placements: list[tuple[dict, float, float, Path | None]] = []
     for cue in cues:
         offset = terminal_len if cue["phase"] == "browser" else 0.0
-        placements.append((cue, cue["from"] + offset, cue["to"] + offset,
+        start = cue["from"] + offset - extensions.get(cue["id"], 0.0)
+        placements.append((cue, start, cue["to"] + offset,
                            find_clip(folder, cue["id"])))
     placements.sort(key=lambda p: p[1])
+
+    for index in range(1, len(placements)):
+        if placements[index][1] < placements[index - 1][2] - 0.001:
+            raise SystemExit(
+                f"{placements[index][0]['id']} now starts before "
+                f"{placements[index - 1][0]['id']} ends; reduce --extend")
 
     missing = [c["id"] for c, _, _, clip in placements if clip is None]
     if missing and not args.allow_missing:

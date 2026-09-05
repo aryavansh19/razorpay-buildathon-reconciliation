@@ -108,20 +108,32 @@ def main(argv: list[str] | None = None) -> int:
         model = WhisperModel(args.model, device="cpu", compute_type="int8")
 
         print("transcribing ...", flush=True)
+        # Word level timings matter here. Using the segment start for every word in the
+        # segment smears a ten second span onto one instant, and words then fall into a
+        # neighbouring cue's bucket, which reads as a placement error that is not real.
         segments, _ = model.transcribe(str(wav), language="en", vad_filter=True,
-                                       beam_size=5)
+                                       beam_size=5, word_timestamps=True)
         lines = []
         for seg in segments:
-            lines.append({"start": seg.start, "end": seg.end,
-                          "text": seg.text.strip()})
+            lines.append({
+                "start": seg.start, "end": seg.end, "text": seg.text.strip(),
+                "words": [{"at": w.start, "word": w.word.strip()}
+                          for w in (seg.words or [])],
+            })
             print(f"  [{seg.start:6.1f}s] {seg.text.strip()}", flush=True)
         out_path.write_text(json.dumps(lines, indent=2), encoding="utf-8")
         wav.unlink(missing_ok=True)
 
     words: list[tuple[float, str]] = []
     for line in lines:
-        for token in normalise(line["text"]):
-            words.append((line["start"], token))
+        if line.get("words"):
+            for entry in line["words"]:
+                for token in normalise(entry["word"]):
+                    words.append((entry["at"], token))
+        else:
+            # Older transcripts, saved before word timings were recorded.
+            for token in normalise(line["text"]):
+                words.append((line["start"], token))
 
     # Bucket recognised words into cue windows and compare with the script.
     cues = json.loads(Path(args.cues).read_text(encoding="utf-8"))
@@ -147,9 +159,9 @@ def main(argv: list[str] | None = None) -> int:
             continue
         offset = terminal_len if cue["phase"] == "browser" else 0.0
         start, end = cue["from"] + offset, cue["to"] + offset
-        # Recognition timestamps land on segment starts, so widen a little at both
-        # ends rather than clipping words that straddle a boundary.
-        said = [w for t, w in words if start - 2.0 <= t < end + 2.0]
+        # A small margin only, now that timings are per word: enough to tolerate
+        # recognition jitter at a boundary, not enough to borrow a neighbour's line.
+        said = [w for t, w in words if start - 0.6 <= t < end + 0.6]
         want = normalise(script[cue["id"]])
         score = similarity(want, said)
         mark = "ok" if score >= 0.7 else ("thin" if score >= 0.45 else "OFF")
