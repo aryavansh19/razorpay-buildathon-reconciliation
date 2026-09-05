@@ -24,26 +24,43 @@ clip at its window with no guesswork.
 
 ## The windows
 
-| id | clip | window in `terminal.mp4` | length | words |
+Positions are in the finished cut, `media/video_clean.mp4`, so they can be checked by
+scrubbing to a timecode and seeing whether the screen matches the line. Regenerate this
+table rather than editing it, because an earlier hand-copied version silently went stale
+when the cue origin was recalibrated:
+
+```
+python tools/vo_table.py
+```
+
+| id | clip | window in the finished cut | length | words at 145 wpm |
 |---|---|---|---|---|
-| `00a` | intro card | 0:16.2 - 0:40.3 | 24.1s | 58 |
-| `01a` | the problem | 0:40.3 - 0:53.4 | 13.1s | 31 |
-| `02a` | reconcile, setup | 0:53.4 - 1:00.5 | 7.1s | 17 |
-| `02b` | reconcile, payoff | 1:04.9 - 1:16.9 | 12.0s | 29 |
-| `03a` | arithmetic, setup | 1:16.9 - 1:24.5 | 7.6s | 18 |
-| `03b` | arithmetic, payoff | 1:29.2 - 1:41.3 | 12.0s | 29 |
-| `04a` | gate, setup | 1:41.3 - 1:48.9 | 7.6s | 18 |
-| `04b` | gate, payoff | 1:53.2 - 2:05.2 | 12.0s | 29 |
-| `05a` | false positive, setup | 2:05.2 - 2:13.3 | 8.1s | 19 |
-| `05b` | false positive, payoff | 2:21.6 - 2:34.6 | 13.0s | 31 |
-| `06a` | generalise, setup | 2:34.6 - 2:41.7 | 7.1s | 17 |
-| `06b` | generalise, payoff | 2:58.7 - 3:12.7 | 14.0s | 33 |
-| `07a` | agent, setup | 3:12.7 - 3:20.8 | 8.1s | 19 |
-| `07b` | agent, payoff | 3:24.0 - 3:34.5 | 10.5s | 25 |
-| `08a` | outro card | 3:34.5 - 3:59.1 | 24.6s | 59 |
-| `99` | browser section | `browser.mp4`, full | 44.1s | 106 |
+| `00a` | intro card | 0:06.0 - 0:30.1 | 24.1s | 58 |
+| `01a` | the problem | 0:30.1 - 0:43.2 | 13.1s | 31 |
+| `02a` | reconcile, setup | 0:43.3 - 0:50.4 | 7.1s | 17 |
+| `02b` | reconcile, payoff | 0:54.7 - 1:06.7 | 12.0s | 29 |
+| `03a` | arithmetic, setup | 1:06.7 - 1:14.3 | 7.6s | 18 |
+| `03b` | arithmetic, payoff | 1:19.1 - 1:31.1 | 12.0s | 29 |
+| `04a` | gate, setup | 1:31.1 - 1:38.7 | 7.6s | 18 |
+| `04b` | gate, payoff | 1:43.0 - 1:55.0 | 12.0s | 29 |
+| `05a` | false positive, setup | 1:55.0 - 2:03.1 | 8.1s | 19 |
+| `05b` | false positive, payoff | 2:11.4 - 2:24.4 | 13.0s | 31 |
+| `06a` | generalise, setup | 2:24.4 - 2:31.5 | 7.1s | 17 |
+| `06b` | generalise, payoff | 2:48.5 - 3:02.5 | 14.0s | 33 |
+| `07a` | agent, setup | 3:02.6 - 3:10.7 | 8.1s | 19 |
+| `07b` | agent, payoff | 3:13.8 - 3:24.3 | 10.5s | 25 |
+| `08a` | outro card | 3:24.3 - 3:48.9 | 24.6s | 59 |
+| `99` | browser section | 3:49.0 - 4:33.0 | 44.1s | 106 |
 
 Terminal footage is 3:49, browser is 0:44. Total 4:33, inside the five-minute limit.
+
+The gaps between windows are not spare narration room. Those are the stretches where a
+command is running and output is scrolling, and anything said over them is the specific
+fault this layout exists to avoid.
+
+The word counts assume 145 wpm and are tight rather than generous. A human read of `02b`
+came in at 15.6s against its 12.0s window and `07a` at 8.3s against 8.1s, so if a
+generated clip overruns, shorten the wording rather than relying on the speed-up.
 
 ## Settings
 
@@ -154,15 +171,41 @@ reverse. Tags below are v3; if you use v2, delete the bracketed tags.
 
 ## What to do with the files
 
-Save them into `media/vo/` named by id, for example `media/vo/02b.mp3`. Then:
+Save them into `media/vo/` named by id, for example `media/vo/02b.mp3`. Any of mp3, wav,
+m4a, aac, flac, ogg or opus is fine. Then:
 
 ```powershell
-python tools/sync_voiceover.py --cues media/cues.json --vo media/vo
+python tools/sync_voiceover.py
+python tools/sync_voiceover.py --allow-missing    # while only some clips exist
 ```
 
-Each clip is placed at its window. Where a clip runs longer than its window the video
-freezes on that frame, which is invisible because the terminal is static there by
-design. Where it runs short the remaining stillness is simply quiet.
+That writes `media/final_tts.mp4`, leaving the spoken cut at `media/final.mp4` alone so
+the two can be compared.
+
+Each clip is placed at its window and pinned to exactly the window length, so one clip
+running long cannot push the next fifteen out of sync. Leading and trailing silence is
+measured and trimmed first, against each file's own noise floor rather than a fixed
+threshold. If the words still overrun, the clip is sped up, and the tool refuses past
+1.15x instead of quietly making the narration sound hurried. Where a clip runs short the
+remaining stillness is simply quiet, which is invisible because the terminal is static
+there by design.
+
+Check the result the same way as the spoken cut, rather than assuming it landed:
+
+```powershell
+python tools/transcribe.py --video media/final_tts.mp4
+```
+
+That buckets recognised words into cue windows and diffs them against the clips above, so
+a clip saved under the wrong id shows up as a mismatch instead of shipping.
+
+## One caveat worth weighing
+
+Razorpay ships ElevenLabs voice agents, so reviewers on this panel are unusually likely
+to recognise a synthesised read. A spoken cut already exists at `media/final.mp4`,
+verified line by line against this script. Generating this version to compare is
+reasonable; replacing a working human read with a synthetic one for a judged submission is
+a trade worth making deliberately rather than by default.
 
 ## Lessons already paid for
 
