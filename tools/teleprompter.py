@@ -30,6 +30,15 @@ from pathlib import Path
 LEAD_IN = 2.2          # seconds a line is previewed before it is due
 MIN_ON_SCREEN = 1.4    # never flash a sentence faster than this
 
+# A sentence longer than this is split at its clause boundaries. Reading a 26 word
+# sentence off one card means finding your place in a block of text while also trying to
+# keep pace, and the opening line of the video is the worst place to do that.
+MAX_CHUNK_WORDS = 12
+
+# Seconds of countdown shown before the first line is due, over the otherwise blank
+# lead-in. Without it the first cue arrives with no warning after a dead stretch.
+COUNTDOWN = 6
+
 
 def find_tool(name: str, fallback: str) -> str:
     if shutil.which(name):
@@ -72,6 +81,35 @@ def load_script(path: Path) -> dict[str, str]:
     return clips
 
 
+def split_long(sentence: str) -> list[str]:
+    """Break an over-long sentence at clause boundaries.
+
+    Splits after commas, semicolons and colons, then regroups the pieces so each card
+    holds at most ``MAX_CHUNK_WORDS`` words. Splitting on word count alone would cut
+    mid-clause, which is harder to read aloud than a slightly long card.
+    """
+    if len(sentence.split()) <= MAX_CHUNK_WORDS:
+        return [sentence]
+
+    pieces = re.split(r"(?<=[,;:])\s+", sentence)
+    chunks: list[str] = []
+    current = ""
+    for piece in pieces:
+        candidate = f"{current} {piece}".strip()
+        if current and len(candidate.split()) > MAX_CHUNK_WORDS:
+            chunks.append(current)
+            current = piece
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+
+    # A trailing scrap of two or three words reads better joined to what precedes it.
+    if len(chunks) > 1 and len(chunks[-1].split()) <= 3:
+        chunks[-2] += " " + chunks.pop()
+    return chunks
+
+
 def sentences_of(text: str) -> list[str]:
     parts = re.split(r"(?<=[.:?])\s+", text)
     merged: list[str] = []
@@ -85,7 +123,11 @@ def sentences_of(text: str) -> list[str]:
             merged[-1] += " " + part
         else:
             merged.append(part)
-    return merged
+
+    chunks: list[str] = []
+    for sentence in merged:
+        chunks.extend(split_long(sentence))
+    return chunks
 
 
 def ass_time(seconds: float) -> str:
@@ -132,10 +174,30 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 def build_ass(cues: list[dict], clips: dict[str, str], browser_offset: float,
-              out: Path) -> tuple[int, list[str]]:
+              out: Path, head_start: float = 0.0) -> tuple[int, list[str]]:
     events: list[str] = []
     missing: list[str] = []
     count = 0
+
+    # The first cue is pulled earlier into the blank lead-in. The title card is already
+    # on screen by then, and the extra seconds go to the longest single block in the
+    # script, which is the one most likely to be rushed.
+    first_start = None
+    for cue in cues:
+        if clips.get(cue["id"]):
+            first_start = max(0.5, cue["from"] - head_start)
+            break
+
+    if first_start is not None and first_start > 1.0:
+        # Count the last few seconds in, so the opening line does not arrive cold.
+        for remaining in range(COUNTDOWN, 0, -1):
+            at = first_start - remaining
+            if at < 0:
+                continue
+            events.append(
+                f"Dialogue: 0,{ass_time(at)},{ass_time(at + 1)},Cue,,0,0,0,,"
+                f"first line in {remaining}"
+            )
 
     for cue in cues:
         cue_id = cue["id"]
@@ -146,6 +208,8 @@ def build_ass(cues: list[dict], clips: dict[str, str], browser_offset: float,
 
         start = cue["from"] + (browser_offset if cue["phase"] == "browser" else 0.0)
         end = cue["to"] + (browser_offset if cue["phase"] == "browser" else 0.0)
+        if first_start is not None and abs(start - (first_start + head_start)) < 0.01:
+            start = first_start
         window = max(0.5, end - start)
 
         chunks = sentences_of(text)
@@ -192,6 +256,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cues", default="media/cues.json")
     parser.add_argument("--script", default="VOICEOVER.md")
     parser.add_argument("--out", default="media/teleprompter.mp4")
+    parser.add_argument(
+        "--head-start", type=float, default=3.0,
+        help="Start the first line this many seconds earlier, using the blank lead-in.",
+    )
     parser.add_argument("--crf", type=int, default=23)
     args = parser.parse_args(argv)
 
@@ -212,7 +280,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(clips)} narration blocks read from {args.script}")
 
     ass_path = Path("media/teleprompter.ass")
-    lines, missing = build_ass(cues, clips, terminal_len, ass_path)
+    lines, missing = build_ass(cues, clips, terminal_len, ass_path,
+                               head_start=args.head_start)
     print(f"{lines} prompt lines written to {ass_path}")
     if missing:
         print(f"  no script text for: {missing}")
