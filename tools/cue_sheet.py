@@ -43,13 +43,7 @@ def find_ffmpeg() -> str:
     raise SystemExit("ffmpeg not found")
 
 
-def find_first_content(ffmpeg: str, video: Path) -> float:
-    """Video time at which the title card appears.
-
-    Before this the console is blank or showing a countdown, so mean luma sits at its
-    floor. The first sustained rise is the title card being printed, which is the demo's
-    own time origin.
-    """
+def ink_curve(ffmpeg: str, video: Path) -> list[float]:
     command = [
         ffmpeg, "-v", "error", "-i", str(video),
         "-vf", f"fps={SAMPLE_FPS},scale={WIDTH}:{HEIGHT},format=gray",
@@ -57,17 +51,71 @@ def find_first_content(ffmpeg: str, video: Path) -> float:
     ]
     raw = subprocess.run(command, capture_output=True, check=True).stdout
     count = len(raw) // FRAME_BYTES
-    ink = [
+    return [
         sum(raw[i * FRAME_BYTES : (i + 1) * FRAME_BYTES]) / FRAME_BYTES
         for i in range(count)
     ]
-    floor = min(ink)
-    ceiling = max(ink)
-    threshold = floor + 0.25 * (ceiling - floor)
-    for index, value in enumerate(ink):
-        if value >= threshold:
-            return index / SAMPLE_FPS
-    return 0.0
+
+
+def screen_clears(ink: list[float], band: float = 0.15) -> list[float]:
+    """Times at which the screen went blank, one per beat."""
+    if not ink:
+        return []
+    floor, ceiling = min(ink), max(ink)
+    threshold = floor + band * (ceiling - floor or 1.0)
+    clears: list[float] = []
+    run_start: int | None = None
+    for index, value in enumerate(ink + [ceiling]):
+        if value <= threshold:
+            if run_start is None:
+                run_start = index
+        elif run_start is not None:
+            moment = run_start / SAMPLE_FPS
+            if not clears or moment - clears[-1] > 4.0:
+                clears.append(moment)
+            run_start = None
+    return clears
+
+
+def calibrate(ffmpeg: str, video: Path, marks: list[dict], duration: float) -> float:
+    """Video time corresponding to the demo's time origin.
+
+    Detecting the origin by looking for the first frame with content does not work. The
+    title card is sparse text, so any threshold high enough to ignore the countdown is
+    also high enough to skip the card and latch onto a later, denser screen. That failure
+    is silent and it shifts every cue by the size of the mistake.
+
+    Instead the estimate comes from arithmetic: the recording is the origin offset, plus
+    the span the demo reported, plus a short tail after it exits. That is then refined by
+    sliding it against the detected screen clears and taking the offset where the demo's
+    own beat starts line up best, which corrects whatever the tail actually was.
+    """
+    span = max(mark["at"] for mark in marks)
+    rough = max(0.0, duration - span - 2.3)
+
+    beat_starts = [m["at"] for m in marks if m["mark"] == "beat_start"]
+    clears = screen_clears(ink_curve(ffmpeg, video))
+    if not clears or not beat_starts:
+        return rough
+
+    best, best_error = rough, float("inf")
+    step = 0.05
+    candidate = max(0.0, rough - 4.0)
+    while candidate <= rough + 4.0:
+        error = 0.0
+        for at in beat_starts:
+            target = candidate + at
+            error += min(abs(target - clear) for clear in clears) ** 2
+        if error < best_error:
+            best, best_error = candidate, error
+        candidate += step
+
+    mean_error = (best_error / len(beat_starts)) ** 0.5
+    print(f"  origin {best:.2f}s  (estimate {rough:.2f}s, "
+          f"mean alignment error {mean_error:.2f}s over {len(beat_starts)} beats)")
+    if mean_error > 1.5:
+        print("  WARNING: beats do not line up well; check the footage and timeline match")
+    return best
 
 
 def words(seconds: float) -> int:
@@ -92,9 +140,14 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"{path} not found")
 
     ffmpeg = find_ffmpeg()
+    ffprobe = find_ffmpeg().replace("ffmpeg", "ffprobe")
     marks = json.loads(timeline_path.read_text(encoding="utf-8"))
-    offset = find_first_content(ffmpeg, video)
-    print(f"{video.name}: title card appears at {offset:.2f}s, used as the origin")
+    duration = float(subprocess.run(
+        [ffprobe, "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", str(video)],
+        capture_output=True, text=True, check=True).stdout.strip())
+    print(f"{video.name}: {duration:.2f}s")
+    offset = calibrate(ffmpeg, video, marks, duration)
 
     # Grouped by the order beats actually ran, not by their number. The intro and outro
     # cards both carry number 0, so keying on the number silently merges them and the
