@@ -94,9 +94,21 @@ def main(argv: list[str] | None = None) -> int:
         chain.append(f"atrim=start={abs(args.offset):.3f},asetpts=PTS-STARTPTS")
     if not args.no_clean_up:
         chain += [
-            "highpass=f=80",                                  # phone handling rumble
-            "acompressor=threshold=-18dB:ratio=3:attack=8:release=180",
-            "loudnorm=I=-16:TP=-1.5:LRA=11",
+            # Below ~85 Hz there is nothing but handling rumble and desk thumps.
+            "highpass=f=85",
+            # Gentle spectral denoise. The recording already has good separation from
+            # its noise floor, and heavy denoising on clean speech costs more in
+            # artefacts and a hollow tone than it removes in hiss.
+            "afftdn=nr=10:nf=-45",
+            # Phones and close speaking exaggerate 200-400 Hz, which reads as boxy.
+            "equalizer=f=300:t=q:w=1.1:g=-3",
+            # A little presence so consonants cut through on a laptop speaker.
+            "equalizer=f=3500:t=q:w=1.4:g=2.5",
+            # Tame sibilance the presence lift would otherwise emphasise.
+            "equalizer=f=7200:t=q:w=1.6:g=-2",
+            # Even out the gap between leaning in and sitting back.
+            "acompressor=threshold=-20dB:ratio=3:attack=8:release=200:makeup=2",
+            "loudnorm=I=-16:TP=-1.5:LRA=9",
         ]
     chain += ["aresample=48000", "aformat=channel_layouts=stereo"]
 
